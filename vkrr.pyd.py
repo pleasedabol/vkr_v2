@@ -37,32 +37,49 @@ def _():
 def _(StringIO, pl):
     def process_coordinates_file(file_content):
         try:
-            # Очищаем файл от лишних пробелов и табуляций
-            cleaned_lines = []
-            for line in file_content.split('\n'):
-                if line.strip():  # Пропускаем пустые строки
-                    # Разбиваем по пробелам и удаляем пустые элементы
-                    parts = [part for part in line.split(' ') if part.strip()]
-                    if len(parts) >= 2:  # Берем только первые два числа
-                        cleaned_lines.append(f"{parts[0]} {parts[1]}")
+            # Валидация формата: каждая непустая строка должна содержать минимум два ЧИСЛА (x y).
+            # Если встречаются нечисловые значения — останавливаем обработку с понятной ошибкой.
+            import re
 
-            # Объединяем обратно в строку
-            cleaned_content = '\n'.join(cleaned_lines)
+            xs: list[float] = []
+            ys: list[float] = []
 
-            # Читаем очищенное содержимое
-            df = pl.read_csv(
-                StringIO(cleaned_content),
-                has_header=False,
-                separator=' ',
-                new_columns=['x_coord', 'y_coord'],
-                truncate_ragged_lines=True  # Игнорируем лишние колонки
-            )
+            for line_no, raw in enumerate(file_content.splitlines(), 1):
+                s = raw.strip()
+                if not s:
+                    continue
 
-            # Извлекаем массивы координат
-            x_coordinates = df['x_coord'].to_list()
-            y_coordinates = df['y_coord'].to_list()
+                # Разбиваем по любому whitespace (пробелы/таб/несколько пробелов)
+                parts = re.split(r"\s+", s)
+                if len(parts) < 2:
+                    return None, None, None, f"Ошибка формата в строке {line_no}: ожидаются две колонки чисел (x y)."
 
-            return df, x_coordinates, y_coordinates, None
+                # Берём только первые две колонки, остальное игнорируем (как и раньше)
+                x_raw, y_raw = parts[0], parts[1]
+
+                # Разрешаем десятичную запятую (частый формат), но в остальном требуем float
+                x_raw = x_raw.replace(",", ".")
+                y_raw = y_raw.replace(",", ".")
+
+                try:
+                    x_val = float(x_raw)
+                    y_val = float(y_raw)
+                except Exception:
+                    return (
+                        None,
+                        None,
+                        None,
+                        f"Ошибка формата в строке {line_no}: значения должны быть числами (x y). Получено: {parts[0]} {parts[1]}",
+                    )
+
+                xs.append(x_val)
+                ys.append(y_val)
+
+            if len(xs) == 0:
+                return None, None, None, "Файл не содержит корректных пар координат (x y)."
+
+            df = pl.DataFrame({"x_coord": xs, "y_coord": ys})
+            return df, xs, ys, None
 
         except Exception as e:
             return None, None, None, f"Ошибка обработки файла: {str(e)}"
@@ -83,6 +100,10 @@ def _(mo):
         mo.md("# 📁 Загрузка файла с координатами"),
         mo.md("## 📤 Загрузка файла"),
         mo.md("Загрузите текстовый файл с координатами в формате: x1 y1 x2 y2, x3 y3..."),
+        mo.md("x1 y1"),
+        mo.md("x2 y2"),
+        mo.md("..."),
+        mo.md("x(n) y(n)"),
         file_upload
     ])
     return (file_upload,)
@@ -149,12 +170,12 @@ def _(aes, df, geom_line, ggplot, ggsize, labs, lp, mo, x_coords, y_coords):
             # Строим график
             plot2 = ggplot(plot_data2) + \
                    geom_line(aes(x='x_coord', y='y_coord'), color='blue', size=1) + \
-                   labs(x='2 theta', y='Интенсивность', title='График координат') + \
+                    labs(x='2θ', y='Интенсивность') + \
                    ggsize(1000, 500)
 
             # ВСЕ в одном vstack
             result_display1 = mo.vstack([
-                mo.md("## 📈 График данных (Lets-Plot)"),
+                mo.md("## 📈 График данных"),
                 plot2
             ])
 
@@ -180,7 +201,7 @@ def _(aes, df, geom_line, ggplot, ggsize, labs, lp, mo, x_coords, y_coords):
 @app.cell
 def _(mo):
     iterations = mo.ui.slider(
-            start=5, stop=150, step=5, value=60,
+            start=5, stop=150, step=5, value=80,
             label="Количество итераций SNIP"
         )
     iterations
@@ -239,7 +260,7 @@ def _(
         plot_1 = (
             ggplot(plot_dataa)
             + geom_line(aes(x="x", y="y", color="type"), size=1)
-            + labs(x="2 theta", y="Интенсивность", title=f"SNIP (итераций: {iterations.value})", color="Тип")
+            + labs(x="2θ", y="Интенсивность", title=f"SNIP (итераций: {iterations.value})", color="Тип")
             + ggsize(1000, 500)
         )
 
@@ -445,7 +466,7 @@ def _(
                 ggplot(plot_data_smooth)
                 + geom_line(aes(x="x", y="y", color="type"), size=1)
                 + labs(
-                    x="2 theta", 
+                    x="2θ", 
                     y="Интенсивность", 
                     title=f"Адаптивное сглаживание Савицкого-Голея (окно: {min_window_slider.value}-{max_window_slider.value}, порядок: {polyorder_slider.value})",
                     color="Тип данных"
@@ -474,16 +495,8 @@ def _(
 
 @app.cell
 def _(mo):
-    # Слайдеры для настройки определения пиков
-    # min_height_slider = mo.ui.slider(
-    #     start=0, stop=200, step=5, value=50,
-    #     label="Минимальная высота пика (интенсивность)"
-    # )
 
-    min_distance_slider = mo.ui.slider(
-        start=5, stop=100, step=5, value=20,
-        label="Минимальное расстояние между пиками (точек)"
-    )
+    min_distance_slider = 100
 
     prominence_slider = mo.ui.slider(
         start=10, stop=100, step=5, value=30,
@@ -491,8 +504,8 @@ def _(mo):
     )
 
     threshold_ratio_slider = mo.ui.slider(
-        start=5, stop=30, step=1, value=15,
-        label="Порог для границ (доля от высоты пика)"
+        start=1, stop=30, step=1, value=6,
+        label="Порог для границ"
     )
 
     min_peak_width_slider = mo.ui.slider(
@@ -504,8 +517,6 @@ def _(mo):
         mo.md("## 🔍 Настройки определения пиков"),
         #mo.md("**Минимальная высота** - пики ниже этого значения игнорируются"),
         #min_height_slider,
-        mo.md("**Минимальное расстояние** - минимальное количество точек между пиками"),
-        min_distance_slider,
         mo.md("**Минимальная значимость** - насколько пик должен выделяться относительно окружения"),
         prominence_slider,
         mo.md("**Значение для фона** - граница пика определяется там, где интенсивность падает до этого значения"),
@@ -654,7 +665,7 @@ def _(
                 y_smoothed,
                 x_coords,
                 min_height=0,
-                min_distance=min_distance_slider.value,
+                min_distance=min_distance_slider,
                 prominence=prominence_slider.value,
                 threshold_ratio= threshold_ratio_slider.value
             )
@@ -691,7 +702,7 @@ def _(
                     ggplot(plot_data_peaks)
                     + geom_line(aes(x="x", y="y"), color='blue', size=1)
                     + labs(
-                        x="2 theta",
+                        x="2θ",
                         y="Интенсивность",
                         title=f"Определенные пики ({len(peaks_data)} шт.) с границами",
                         color="Элементы"
@@ -717,7 +728,7 @@ def _(
                 result_peaks = mo.vstack([
                     mo.md("## 📊 Определение пиков"),
                     mo.md(f"**Найдено пиков:** {len(peaks_data)}"),
-                    mo.md(f"**Параметры:** расстояние ≥ {min_distance_slider.value}, значимость ≥ {prominence_slider.value}, ширина ≥ {min_peak_width_slider.value}"),
+                    mo.md(f"**Параметры:** значимость ≥ {prominence_slider.value}, ширина ≥ {min_peak_width_slider.value}"),
                     mo.md("### 📋 Таблица пиков"),
                     mo.ui.table(df_peaks)
                 ])
@@ -747,19 +758,21 @@ def _():
 
 @app.cell
 def _(mo):
-    # Слайдер для порога R² качества аппроксимации
-    r2_threshold_slider = mo.ui.slider(
-        start=0.80, stop=0.999, step=0.001, value=0.95,
-        label="R² порог (качество аппроксимации)"
+    # Ручной ввод порога tail-weighted R²
+    # Ограничение: 0.80 ≤ threshold ≤ 0.999
+    r2_threshold_input = mo.ui.text(
+        value="0.993",
+        label="Порог качества (tail-weighted R²) — ввод вручную"
     )
 
     mo.vstack([
         mo.md("## ⚙️ Настройка аппроксимации"),
-        mo.md("**R² порог** - минимальное качество аппроксимации для остановки добавления компонент"),
-        mo.md("*Если R² ≥ порога, добавление компонент прекращается*"),
-        r2_threshold_slider
+        mo.md("**Порог качества** - минимальное качество аппроксимации для остановки добавления компонент."),
+        mo.md("*Метрика: tail-weighted R² (хвосты имеют больший вес). Если score ≥ порога, добавление компонент прекращается.*"),
+        mo.md("**Ограничения ввода:** значение должно быть числом в диапазоне **[0.80; 0.999]**. Если ввод невалиден — будет использовано значение по умолчанию **0.993**."),
+        r2_threshold_input,
     ])
-    return (r2_threshold_slider,)
+    return (r2_threshold_input,)
 
 
 @app.cell
@@ -776,12 +789,26 @@ def _(
     np,
     peaks_data,
     pl,
-    r2_threshold_slider,
+    r2_threshold_input,
     savgol_filter,
     x_coords,
     y_coords,
 ):
     # ==============================================================================
+    def _effective_r2_threshold() -> float:
+        """
+        Порог качества: ввод вручную.
+        Если ввод невалиден — используем значение по умолчанию 0.993.
+        """
+        default_v = 0.993
+        try:
+            v = float(str(r2_threshold_input.value).strip())
+        except Exception:
+            return float(default_v)
+        if not (0.80 <= v <= 0.999):
+            return float(default_v)
+        return float(v)
+
     # === СЕКЦИЯ 1: МАТЕМАТИКА ===
     # Базовые математические функции для аппроксимации
     # ==============================================================================
@@ -795,32 +822,62 @@ def _(
         Параметры:
         - A: амплитуда
         - mu: центр
-        - sigma: ширина
+        - sigma: ширина (FWHM, единая параметризация для Лоренца и Гаусса)
         - eta: доля лоренцевой компоненты [0, 1]
         """
-        # Лоренцева компонента
-        L = 1 / (1 + ((x - mu) / (sigma / 2))**2)
+        x = np.asarray(x, dtype=float)
+        # sigma трактуем как FWHM (как в распространённых реализациях псевдо‑Воигта)
+        # L(x): 1 / (1 + 4 * ((x-mu)/FWHM)^2)
+        # G(x): exp(-4*ln(2) * ((x-mu)/FWHM)^2)
+        sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-12)
+        z = (x - float(mu)) / sigma
 
-        # Гауссова компонента
-        G = np.exp(-(x - mu)**2 / (2 * sigma**2))
+        # Лоренцева компонента (нормирована: L(mu)=1)
+        L = 1.0 / (1.0 + 4.0 * (z ** 2))
+
+        # Гауссова компонента (нормирована: G(mu)=1, ширина задаётся FWHM)
+        G = np.exp(-4.0 * np.log(2.0) * (z ** 2))
 
         # Псевдо-Войгт
         return A * (eta * L + (1 - eta) * G)
 
 
-    def calculate_r2(y_true, y_pred):
+    def calculate_tail_weighted_r2(y_true, y_pred, tail_weight_max=10.0):
         """
-        Вычисление коэффициента детерминации R².
+        Tail-weighted R² (bounded, rank-based).
 
-        R² = 1 - SS_res / SS_tot
+        Цель: сильнее штрафовать ошибку на "хвостах" (низких интенсивностях),
+        но без взрывных весов, чтобы score оставался сопоставим с обычным R².
+
+        Идея:
+        - сортируем y_true по возрастанию (самый "хвост" = минимальные y)
+        - назначаем веса в диапазоне [1, tail_weight_max]:
+            w(low y) = tail_weight_max, w(high y) = 1
+        - считаем взвешенный R²
         """
-        ss_res = np.sum((y_true - y_pred)**2)
-        ss_tot = np.sum((y_true - np.mean(y_true))**2)
+        y_true = np.asarray(y_true, dtype=float)
+        y_pred = np.asarray(y_pred, dtype=float)
+        n = len(y_true)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return 1.0
 
+        # rank_low: 0 для минимальных y (хвост), n-1 для максимальных y (вершина)
+        order = np.argsort(y_true)
+        rank_low = np.empty(n, dtype=float)
+        rank_low[order] = np.arange(n, dtype=float)
+
+        tw = float(max(1.0, tail_weight_max))
+        w = 1.0 + (tw - 1.0) * (1.0 - (rank_low / (n - 1.0)))
+        w = w / np.sum(w)
+
+        y_mean_w = np.sum(w * y_true)
+        ss_res = np.sum(w * (y_true - y_pred) ** 2)
+        ss_tot = np.sum(w * (y_true - y_mean_w) ** 2)
         if ss_tot == 0:
             return 0.0
-
-        return 1 - (ss_res / ss_tot)
+        return 1.0 - (ss_res / ss_tot)
 
 
     def estimate_initial_sigma(x, y, peak_idx, peak_y):
@@ -841,10 +898,11 @@ def _(
         while right_idx < len(y) - 1 and y[right_idx] > half_height:
             right_idx += 1
 
-        # Ширина на половине высоте
-        fwhm = x[right_idx] - x[left_idx]
-
-        return max(0.5 * fwhm, (x[1] - x[0]) * 2)
+        # Ширина на половине высоте (FWHM)
+        fwhm = float(x[right_idx] - x[left_idx])
+        dx = float(x[1] - x[0]) if len(x) > 1 else 1.0
+        # Так как pseudo_voigt использует sigma как FWHM, возвращаем FWHM
+        return max(fwhm, dx * 2.0)
 
 
     # ==============================================================================
@@ -856,72 +914,19 @@ def _(
         """
         Разбиение пика на сегменты на основе анализа формы.
 
-        Использует:
-        - Локальные минимумы
-        - Смены знака производной
-        - Пики кривизны (вторая производная)
-
         Возвращает:
         - список кортежей [(x_start, x_end), ...]
         """
-        segments = []
-        N = len(x)
-
-        if N < 10:
-            return [(x[0], x[-1])]
-
-        # Находим локальные минимумы внутри пика (исключая края)
-        from scipy.signal import find_peaks
-        inv_y = -y
-        local_minima_idx, _ = find_peaks(inv_y, distance=5)
-
-        # Фильтруем локальные минимумы
-        minima_to_use = []
-        for idx in local_minima_idx:
-            if 5 < idx < N - 5:  # Убираем минимумы около краев
-                # Проверяем, что это действительно минимум (ниже соседей)
-                if y[idx] < y[idx-1] and y[idx] < y[idx+1]:
-                    minima_to_use.append(idx)
-
-        # Если минимумов нет, возвращаем один сегмент
-        if len(minima_to_use) == 0:
-            return [(x[0], x[-1])]
-
-        # Сортируем минимумы по y (берем самые низкие)
-        minima_to_use = sorted(minima_to_use, key=lambda i: y[i])
-
-        # Определяем точки разбиения
-        split_points = []
-
-        # Анализируем производную для подтверждения точек разбиения
-        dy = np.gradient(y, x)
-
-        for min_idx in minima_to_use:
-            # Проверяем производную: должен быть близка к 0 или менять знак
-            if abs(dy[min_idx]) < np.std(dy) * 0.5:
-                split_points.append(x[min_idx])
-
-            # Ограничиваем количество точек разбиения
-            if len(split_points) >= max_segments - 1:
-                break
-
-        # Формируем сегменты
-        split_points = sorted(split_points)
-
-        if len(split_points) == 0:
-            segments.append((x[0], x[-1]))
-        else:
-            # Добавляем первый сегмент
-            segments.append((x[0], split_points[0]))
-
-            # Добавляем средние сегменты
-            for i in range(len(split_points) - 1):
-                segments.append((split_points[i], split_points[i + 1]))
-
-            # Добавляем последний сегмент
-            segments.append((split_points[-1], x[-1]))
-
-        return segments
+        # Ранее здесь был "костыль" с поиском локальных минимумов, который мог
+        # искусственно ограничивать/резать пик.
+        #
+        # В текущей архитектуре сегментация для piecewise-fit выполняется внутри
+        # fit_peak_with_domain_components (через оптимизацию границ), поэтому
+        # отдельная эвристика по локальным минимумам не нужна.
+        x = np.asarray(x, dtype=float)
+        if len(x) == 0:
+            return []
+        return [(float(x[0]), float(x[-1]))]
 
 
     # ==============================================================================
@@ -1043,65 +1048,6 @@ def _(
         return y_pred
 
 
-    def calculate_aggregated_score(x_peak, y_peak, components):
-        """
-        Вспомогательная диагностическая метрика для выбора числа компонент.
-
-        ПОЧЕМУ НУЖНА:
-        ================
-        Piecewise-модель с жёсткой сегментацией:
-        - НЕ увеличивает выразительность при добавлении компонент
-        - Каждая точка описывается РОВНО одной компонентой
-        - Поэтому R²(piecewise) почти не меняется при изменении n
-
-        Следовательно:
-        - R²(piecewise) НЕ МОЖЕТ использоваться для выбора сложности
-        - Нужна диагностическая метрика, агрегирующая все компоненты
-
-        ЧТО ЭТО:
-        ==========
-        - Агрегирует вклад всех компонент ГЛОБАЛЬНО
-        - Существует ТОЛЬКО как скалярная оценка
-        - НЕ используется как аппроксимация
-        - НЕ возвращается наружу
-        - НЕ визуализируется как итоговый fit
-
-        АЛГОРИТМ:
-        ===========
-        1. Для каждой компоненты вычисляем Voigt на всём интервале
-        2. Агрегируем компоненты (сумма с весами)
-        3. Считаем R² относительно этой агрегации
-
-        Параметры:
-        - x_peak: x-координаты
-        - y_peak: y-значения пика
-        - components: список компонент с параметрами
-
-        Возвращает:
-        - score: скалярная оценка качества [0, 1]
-        """
-        # Инициализируем агрегацию
-        y_aggregated = np.zeros_like(x_peak)
-
-        # Агрегируем все компоненты (глобальная сумма)
-        for comp in components:
-            # Вычисляем Voigt на всём интервале (без ограничений сегмента!)
-            comp_values = pseudo_voigt(
-                x_peak,
-                comp['A'],
-                comp['mu'],
-                comp['sigma'],
-                comp['eta']
-            )
-
-            # Добавляем вклад компоненты
-            y_aggregated += comp_values
-
-        # Считаем R² относительно агрегации
-        score = calculate_r2(y_peak, y_aggregated)
-
-        return score
-
     # ==============================================================================
     # === СЕКЦИЯ 4: FIT ОДНОГО ПИКА ===
     # Адаптивная аппроксимация с piecewise-подходом
@@ -1109,9 +1055,9 @@ def _(
 
     def fit_peak_with_domain_components(x_peak, y_peak, r2_threshold=0.95, max_components=3):
         """
-        Piecewise-аппроксимация пика псевдо-Войгтами (БЕЗ сумм):
+        Piecewise-аппроксимация пика псевдо-Войгтами (БЕЗ сумм), критерий — tail-R²:
         - каждая точка принадлежит ровно одному сегменту → оценивается ровно одной компонентой
-        - число компонент растёт строго 1 → 2 → 3 только если R² текущей модели ниже порога
+        - число компонент растёт строго 1 → 2 → 3 только если tail-R² текущей модели ниже порога
         - сегментация НЕ фиксируется заранее: границы сегментов подстраиваем, минимизируя SSE
         """
         x_peak = np.asarray(x_peak, dtype=float)
@@ -1120,20 +1066,61 @@ def _(
         max_components = int(max_components)
 
         N = len(x_peak)
+        # Линейный baseline на пик (по концам интервала) — нужен, чтобы корректно описывать "хвосты"
+        # и не заставлять Voigt "тащить" фон.
+        def _baseline_endpoints() -> dict:
+            if len(x_peak) == 0:
+                return {'x1': 0.0, 'y1': 0.0, 'x2': 0.0, 'y2': 0.0}
+            x0 = float(x_peak[0])
+            x1 = float(x_peak[-1])
+            y0 = float(y_peak[0]) if len(y_peak) > 0 else 0.0
+            y1 = float(y_peak[-1]) if len(y_peak) > 0 else y0
+            return {'x1': x0, 'y1': y0, 'x2': x1, 'y2': y1}
+
+        def _baseline_vec(xs: np.ndarray) -> np.ndarray:
+            xs = np.asarray(xs, dtype=float)
+            if len(x_peak) == 0:
+                return np.zeros_like(xs, dtype=float)
+            ep = _baseline_endpoints()
+            x0 = float(ep['x1'])
+            x1 = float(ep['x2'])
+            y0 = float(ep['y1'])
+            y1 = float(ep['y2'])
+            if x1 == x0:
+                return np.full_like(xs, y0, dtype=float)
+            t = (xs - x0) / (x1 - x0)
+            return y0 + (y1 - y0) * t
+
+        y_peak_corr = y_peak - _baseline_vec(x_peak)
         if N < 4:
             # Фолбэк на очень коротком массиве
             segments = [(float(x_peak.min()), float(x_peak.max()))] if N else []
             max_idx = int(np.argmax(y_peak)) if N else 0
             mu = float(x_peak[max_idx]) if N else 0.0
-            A = float(y_peak[max_idx]) if N else 0.0
+            A = float(y_peak_corr[max_idx]) if N else 0.0
             sigma = float(abs(x_peak[1] - x_peak[0])) if N > 1 else 1.0
             comp = {'A': A, 'mu': mu, 'sigma': sigma, 'eta': 0.5, 'support': segments[0] if segments else (0.0, 0.0)}
-            y_pred = pseudo_voigt(x_peak, comp['A'], comp['mu'], comp['sigma'], comp['eta']) if N else np.array([], dtype=float)
-            r2 = float(calculate_r2(y_peak, y_pred)) if N else 0.0
-            return {'components': [comp] if segments else [], 'y_pred': y_pred, 'r2': r2, 'num_components': 1 if segments else 0, 'segments': segments}
+            y_pred_corr = pseudo_voigt(x_peak, comp['A'], comp['mu'], comp['sigma'], comp['eta']) if N else np.array([], dtype=float)
+            y_pred = y_pred_corr + _baseline_vec(x_peak) if N else np.array([], dtype=float)
+            score = float(calculate_tail_weighted_r2(y_peak, y_pred)) if N else 0.0
+            outlier_score_threshold = 0.90
+            # Строго по правилу проекта: выброс, если score_at_max_components < 0.90
+            # (даже если массив короткий и 3 компоненты технически не фитятся)
+            is_outlier = (max_components >= 3) and (float(score) < float(outlier_score_threshold))
+            return {
+                'components': [comp] if segments else [],
+                'y_pred': y_pred,
+                'score': score,
+                'score_at_max_components': score,
+                'outlier_score_threshold': outlier_score_threshold,
+                'is_outlier': is_outlier,
+                'num_components': 1 if segments else 0,
+                'segments': segments,
+                'baseline': _baseline_endpoints(),
+            }
 
         dx = float(np.median(np.diff(x_peak))) if N > 2 else float(x_peak[1] - x_peak[0])
-        y_global_max = float(np.max(y_peak)) if N else 1.0
+        y_global_max = float(np.max(y_peak_corr)) if N else 1.0
 
         def _segments_from_splits(split_indices, n, N_):
             """split_indices: индексы окончания левого сегмента (включительно)."""
@@ -1160,7 +1147,7 @@ def _(
 
         def _fit_component(i0, i1):
             xs = x_peak[i0:i1+1]
-            ys = y_peak[i0:i1+1]
+            ys = y_peak_corr[i0:i1+1]
 
             # начальные оценки
             max_idx = int(np.argmax(ys))
@@ -1188,7 +1175,7 @@ def _(
                     ys,
                     p0=p0,
                     bounds=bounds,
-                    maxfev=8000,
+                    maxfev=15000,
                     method='trf'
                 )
                 A, mu, sigma, eta = [float(v) for v in popt]
@@ -1306,12 +1293,119 @@ def _(
             for c, seg in zip(comps, x_segs):
                 c['support'] = (float(seg[0]), float(seg[1]))
 
-            y_pred = _piecewise_predict(seg_idx, comps)
-            r2 = float(calculate_r2(y_peak, y_pred))
-            return {'components': comps, 'y_pred': y_pred, 'r2': r2, 'num_components': n, 'segments': x_segs}
+            # === Уточнение: joint fit baseline + piecewise-Voigt при фиксированных сегментах ===
+            # Это устраняет систематические смещения хвостов (baseline "учится" вместе с Voigt),
+            # но не ломает текущую сегментацию/архитектуру.
+            def _fit_func_with_baseline(x, b0, b1, *voigt_params):
+                x = np.asarray(x, dtype=float)
+                baseline = b0 + b1 * x
+                y_pred_local = np.array(baseline, copy=True)
+                # индексная piecewise-логика (каждая точка принадлежит ровно одному сегменту)
+                if len(x) == N:
+                    for i in range(n):
+                        p = voigt_params[i * 4:(i + 1) * 4]
+                        A, mu, sigma, eta = p
+                        i0, i1 = seg_idx[i]
+                        xs = x[i0:i1 + 1]
+                        y_pred_local[i0:i1 + 1] = baseline[i0:i1 + 1] + pseudo_voigt(xs, A, mu, sigma, eta)
+                    return y_pred_local
+                # фолбэк (на всякий случай) — по маскам
+                for i in range(n):
+                    p = voigt_params[i * 4:(i + 1) * 4]
+                    A, mu, sigma, eta = p
+                    x_start, x_end = x_segs[i]
+                    mask = (x >= x_start) & (x <= x_end)
+                    y_pred_local[mask] = baseline[mask] + pseudo_voigt(x[mask], A, mu, sigma, eta)
+                return y_pred_local
+
+            # p0 для baseline из "концов" + параметры компонент из сегментных fit
+            ep0 = _baseline_endpoints()
+            x1, y1 = float(ep0['x1']), float(ep0['y1'])
+            x2, y2 = float(ep0['x2']), float(ep0['y2'])
+            if x2 != x1:
+                b1_0 = (y2 - y1) / (x2 - x1)
+            else:
+                b1_0 = 0.0
+            b0_0 = y1 - b1_0 * x1
+
+            p0 = [float(b0_0), float(b1_0)]
+            for c in comps:
+                p0.extend([float(c['A']), float(c['mu']), float(c['sigma']), float(c['eta'])])
+
+            # bounds: baseline достаточно широкие; для компонент — как раньше, но глобально
+            y_min = float(np.min(y_peak)) if N else 0.0
+            y_max = float(np.max(y_peak)) if N else 1.0
+            y_rng = float(max(1e-6, y_max - y_min))
+            x_rng = float(max(1e-12, float(x_peak[-1] - x_peak[0])))
+
+            b0_lo = y_min - 2.0 * y_rng
+            b0_hi = y_max + 2.0 * y_rng
+            b1_abs = (y_rng / x_rng) * 10.0
+            b1_lo, b1_hi = -b1_abs, b1_abs
+
+            lower = [b0_lo, b1_lo]
+            upper = [b0_hi, b1_hi]
+
+            # оценка амплитуд относительно стартового baseline
+            y_corr0 = y_peak - (b0_0 + b1_0 * x_peak)
+            y_corr_max = float(np.max(y_corr0)) if N else 1.0
+            y_corr_max = float(max(y_corr_max, 1e-6))
+
+            for i, (c, seg) in enumerate(zip(comps, x_segs)):
+                x_min_s, x_max_s = float(seg[0]), float(seg[1])
+                width = float(max(x_max_s - x_min_s, dx))
+                A0 = float(c['A'])
+                A_min, A_max = 0.0, float(max(y_corr_max * 3.0, A0 * 3.0, 1e-6))
+                mu_min, mu_max = x_min_s, x_max_s
+                sigma_min, sigma_max = float(max(dx, 1e-6)), float(max(width * 2.0, dx * 3.0))
+                eta_min, eta_max = 0.0, 1.0
+                lower.extend([A_min, mu_min, sigma_min, eta_min])
+                upper.extend([A_max, mu_max, sigma_max, eta_max])
+
+            try:
+                popt, _ = curve_fit(
+                    _fit_func_with_baseline,
+                    x_peak,
+                    y_peak,
+                    p0=p0,
+                    bounds=(lower, upper),
+                    maxfev=15000,
+                    method='trf',
+                )
+                b0_hat = float(popt[0])
+                b1_hat = float(popt[1])
+                # обновляем компоненты из joint fit
+                comps_hat = []
+                for i, seg in enumerate(x_segs):
+                    idx = 2 + i * 4
+                    A, mu, sigma, eta = [float(v) for v in popt[idx:idx + 4]]
+                    comps_hat.append({'A': A, 'mu': mu, 'sigma': sigma, 'eta': eta, 'support': (float(seg[0]), float(seg[1]))})
+                comps = comps_hat
+                y_pred_total = _fit_func_with_baseline(x_peak, b0_hat, b1_hat, *popt[2:])
+                baseline_ep = {
+                    'x1': float(x_peak[0]),
+                    'y1': float(b0_hat + b1_hat * float(x_peak[0])),
+                    'x2': float(x_peak[-1]),
+                    'y2': float(b0_hat + b1_hat * float(x_peak[-1])),
+                }
+            except Exception:
+                # фолбэк на старую схему: baseline по концам + сегментные компоненты
+                y_pred = _piecewise_predict(seg_idx, comps)
+                y_pred_total = y_pred + _baseline_vec(x_peak)
+                baseline_ep = _baseline_endpoints()
+
+            score = float(calculate_tail_weighted_r2(y_peak, y_pred_total))
+            return {
+                'components': comps,
+                'y_pred': y_pred_total,
+                'score': score,
+                'num_components': n,
+                'segments': x_segs,
+                'baseline': baseline_ep,
+            }
 
         # Последовательное увеличение числа компонент:
-        # - "выбранный" результат определяется порогом slider (r2_threshold)
+        # - "выбранный" результат определяется порогом slider (score >= r2_threshold)
         # - дополнительно ВСЕГДА считаем качество на max_components (для фильтра выбросов)
         chosen_res = None
         last_res = None
@@ -1319,22 +1413,24 @@ def _(
         for n in range(1, max_components + 1):
             res = _fit_piecewise_for_n(n)
             last_res = res
-            if chosen_res is None and float(res['r2']) >= r2_threshold:
+            if chosen_res is None and float(res['score']) >= r2_threshold:
                 chosen_res = res
 
         if chosen_res is None:
             chosen_res = last_res
 
-        # Фильтр выбросов: если даже на max_components (обычно 3) R² < 0.9 → некорректный пик
-        outlier_r2_threshold = 0.90
-        r2_at_max = float(last_res['r2']) if last_res is not None else 0.0
-        is_outlier = (max_components >= 3) and (r2_at_max < outlier_r2_threshold)
+        # Выброс: если даже на 3 компонентах tail-weighted R² < 0.90 → некорректный пик
+        outlier_score_threshold = 0.90
+        score_at_max = float(last_res['score']) if last_res is not None else 0.0
+        is_outlier = (max_components >= 3) and (score_at_max < outlier_score_threshold)
 
         # Возвращаем выбранный результат + диагностические поля
         chosen_res = dict(chosen_res)
-        chosen_res['r2_at_max_components'] = r2_at_max
-        chosen_res['outlier_r2_threshold'] = outlier_r2_threshold
+        chosen_res['score_at_max_components'] = score_at_max
+        chosen_res['outlier_score_threshold'] = outlier_score_threshold
         chosen_res['is_outlier'] = is_outlier
+        # baseline уже определён внутри _fit_piecewise_for_n (joint fit baseline+Voigt),
+        # не перезатираем его эвристикой "по концам"
         return chosen_res
 
 
@@ -1365,79 +1461,29 @@ def _(
                 left_idx = peak_info['left_bound_idx']
                 right_idx = peak_info['right_bound_idx']
 
-                # Берём сегмент по грубым границам (они получены ранее),
-                # но ДО fit уточняем границы по правилам локальных минимумов.
-                y_seg = np.asarray(y_coords_fit[left_idx:right_idx+1], dtype=float)
-
-                # Если сегмент слишком короткий — оставляем как есть
-                if len(y_seg) >= 5:
-                    # 1) вершина (внутри сегмента)
-                    i_peak = int(np.argmax(y_seg))
-
-                    # 2) самый глубокий локальный минимум на стороне
-                    # Локальный минимум: y[i] < y[i-1] и y[i] < y[i+1]
-                    def _deepest_local_min_idx(arr: np.ndarray) -> int | None:
-                        if len(arr) < 3:
-                            return None
-                        candidates = []
-                        for k in range(1, len(arr) - 1):
-                            if arr[k] < arr[k - 1] and arr[k] < arr[k + 1]:
-                                candidates.append(k)
-                        if not candidates:
-                            return None
-                        # самый глубокий = с минимальным y
-                        return min(candidates, key=lambda k: arr[k])
-
-                    # левая сторона (0 .. i_peak)
-                    left_side = y_seg[: i_peak + 1]
-                    left_min_rel = _deepest_local_min_idx(left_side)
-                    if left_min_rel is None:
-                        left_min_rel = int(np.argmin(left_side))
-                    y_min_left = float(left_side[left_min_rel])
-                    thr_left = y_min_left + 5.0
-
-                    # правая сторона (i_peak .. end)
-                    right_side = y_seg[i_peak:]
-                    right_min_rel = _deepest_local_min_idx(right_side)
-                    if right_min_rel is None:
-                        right_min_rel = int(np.argmin(right_side))
-                    y_min_right = float(right_side[right_min_rel])
-                    thr_right = y_min_right + 5.0
-
-                    # 3) уточняем границы:
-                    # слева: идём от вершины к 0, ищем первую точку, где y <= thr_left
-                    new_left_rel = 0
-                    for k in range(i_peak, -1, -1):
-                        if float(y_seg[k]) <= thr_left:
-                            new_left_rel = k
-                            break
-
-                    # справа: идём от вершины к концу, ищем первую точку, где y <= thr_right
-                    new_right_rel = len(y_seg) - 1
-                    for k in range(i_peak, len(y_seg)):
-                        if float(y_seg[k]) <= thr_right:
-                            new_right_rel = k
-                            break
-
-                    # 4) защитные условия (не даём пик "схлопнуться")
-                    if new_left_rel >= i_peak:
-                        new_left_rel = 0
-                    if new_right_rel <= i_peak:
-                        new_right_rel = len(y_seg) - 1
-
-                    # 5) применяем уточнённые границы к глобальным индексам
-                    left_idx = left_idx + int(new_left_rel)
-                    right_idx = left_idx + int(new_right_rel - new_left_rel)
-
                 # Данные для fit берём по уточнённым границам
                 x_peak = np.array(x_coords[left_idx:right_idx+1])
                 y_peak_raw = np.array(y_coords_fit[left_idx:right_idx+1], dtype=float)
                 y_peak = y_peak_raw
 
+                # Линейный baseline по концам пика (для корректных "хвостов" в fit/визуализации)
+                def _baseline_vec_peak(xs: np.ndarray) -> np.ndarray:
+                    xs = np.asarray(xs, dtype=float)
+                    if len(x_peak) == 0:
+                        return np.zeros_like(xs, dtype=float)
+                    x0 = float(x_peak[0])
+                    x1 = float(x_peak[-1])
+                    y0 = float(y_peak[0]) if len(y_peak) > 0 else 0.0
+                    y1 = float(y_peak[-1]) if len(y_peak) > 0 else y0
+                    if x1 == x0:
+                        return np.full_like(xs, y0, dtype=float)
+                    t = (xs - x0) / (x1 - x0)
+                    return y0 + (y1 - y0) * t
+
                 # Выполняем аппроксимацию с domain-based подходом
                 result = fit_peak_with_domain_components(
                     x_peak, y_peak,
-                    r2_threshold=r2_threshold_slider.value,
+                    r2_threshold=_effective_r2_threshold(),
                     max_components=3
                 )
 
@@ -1456,25 +1502,34 @@ def _(
                 # Добавляем компоненты для визуализации (на всём интервале пика)
                 # Piecewise-логика используется ТОЛЬКО для fit и R²
                 # Визуализация — диагностическая: показываем симметрию Voigt
+                # baseline берём из результата fit (joint baseline+Voigt), чтобы визуализация совпадала с моделью
+                bl = result.get('baseline', None)
+                if isinstance(bl, dict) and all(k in bl for k in ('x1', 'y1', 'x2', 'y2')) and float(bl['x2']) != float(bl['x1']):
+                    x1b, y1b = float(bl['x1']), float(bl['y1'])
+                    x2b, y2b = float(bl['x2']), float(bl['y2'])
+                    baseline_vals = y1b + (y2b - y1b) * (x_peak - x1b) / (x2b - x1b)
+                else:
+                    baseline_vals = _baseline_vec_peak(x_peak)
                 colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
                 for j, comp in enumerate(result['components']):
                     # Вычисляем Voigt НА ВСЁМ интервале пика (без ограничений!)
                     comp_values = pseudo_voigt(x_peak, comp['A'], comp['mu'], comp['sigma'], comp['eta'])
+                    model_values = comp_values + baseline_vals
 
-                    # Добавляем все точки (компонента рисуется полностью)
+                    # Добавляем все точки (показываем ТОЛЬКО суммарную кривую = baseline + компонента)
                     plot_data['x'] += x_peak.tolist()
-                    plot_data['y'] += comp_values.tolist()
-                    plot_data['type'] += [f'Компонента {j+1}'] * len(x_peak)
+                    plot_data['y'] += model_values.tolist()
+                    plot_data['type'] += [f'Компонента {j+1} (baseline + Voigt)'] * len(x_peak)
 
                 # Создаем plot без vertical lines
-                outlier_suffix = " (ВЫБРОС: R²@3 < 0.90)" if result.get('is_outlier') else ""
+                outlier_suffix = " (ВЫБРОС: tail-R²@3 < 0.90)" if result.get('is_outlier') else ""
                 plot = (
                     ggplot(plot_data)
                     + geom_line(aes(x='x', y='y', color='type'), size=1.2)
                     + labs(
-                        x=f"2 theta (центр: {peak_info['peak_x']:.2f})",
+                        x=f"2θ (центр: {peak_info['peak_x']:.2f})",
                         y="Интенсивность",
-                        title=f"Пик {i+1}: {result['num_components']} компонент(ы), R² = {result['r2']:.4f}{outlier_suffix}",
+                        title=f"Пик {i+1}: {result['num_components']} компонент(ы), tail-R² = {float(result['score']):.4f}{outlier_suffix}",
                         color="Легенда"
                     )
                     + ggsize(800, 400)
@@ -1483,11 +1538,11 @@ def _(
                 plot_elements.append({
                     'title': f"Пик {i+1}",
                     'plot': plot,
-                    'r2': result['r2'],
+                    'score': result.get('score', None),
                     'num_components': result['num_components'],
                     'segments': result['segments'],
                     'is_outlier': result.get('is_outlier', False),
-                    'r2_at_max_components': result.get('r2_at_max_components', None)
+                    'score_at_max_components': result.get('score_at_max_components', None)
                 })
 
             # Создаем таблицу результатов
@@ -1505,9 +1560,9 @@ def _(
                     'Номер': i + 1,
                     'X пика': round(res['peak_info']['peak_x'], 2),
                     'Компонент': res['num_components'],
-                    'R²': round(res['r2'], 4),
+                    'tail-R²': None if res.get('score') is None else round(float(res['score']), 4),
                     'Выброс': is_outlier,
-                    'R²@3': None if res.get('r2_at_max_components') is None else round(float(res['r2_at_max_components']), 4),
+                    'tail-R²@3': None if res.get('score_at_max_components') is None else round(float(res['score_at_max_components']), 4),
                     'Support': len(res['segments']),
                     'Параметры': comp_info
                 })
@@ -1517,8 +1572,8 @@ def _(
             # Формируем результат
             display_plots = mo.vstack([
                 mo.md("## 📈 Аппроксимация пиков функциями псевдо-Войгта (Piecewise)"),
-                mo.md(f"**Порог R²:** {r2_threshold_slider.value:.3f}, **Обработано пиков:** {len(fitting_results)}"),
-                mo.md(f"**Фильтр выбросов:** если даже при 3 компонентах R² < 0.90 → пик помечается как выброс. Сейчас выбросов: **{outliers_count}**."),
+                mo.md(f"**Порог tail-R²:** {_effective_r2_threshold():.3f}, **Обработано пиков:** {len(fitting_results)}"),
+                mo.md(f"**Фильтр выбросов:** если даже при 3 компонентах tail-R² < 0.90 → пик помечается как выброс. Сейчас выбросов: **{outliers_count}**."),
                 mo.md("*Модель: piecewise (каждая точка описывается одной компонентой)*"),
                 mo.md("*Визуализация: компоненты показаны полностью для оценки симметрии*"),
                 mo.md("### 📊 Графики аппроксимации для каждого пика"),
@@ -1530,7 +1585,7 @@ def _(
                     display_plots,
                     mo.hstack([
                         elem['plot'],
-                        mo.md(f"**{elem['title']}**\n\n• Компонент: {elem['num_components']}\n• R² = {elem['r2']:.4f}\n• Supports: {segments_str}")
+                        mo.md(f"**{elem['title']}**\n\n• Компонент: {elem['num_components']}\n• tail-R² = {float(elem['score']):.4f}\n• Supports: {segments_str}")
                     ])
                 ])
 
@@ -1581,8 +1636,12 @@ def _(
             lp.LetsPlot.setup_html()
 
             def pseudo_voigt(x, A, mu, sigma, eta):
-                L = 1 / (1 + ((x - mu) / (sigma / 2))**2)
-                G = np.exp(-(x - mu)**2 / (2 * sigma**2))
+                x = np.asarray(x, dtype=float)
+                # sigma трактуем как FWHM (единая параметризация как в fit-ячейке)
+                sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-12)
+                z = (x - float(mu)) / sigma
+                L = 1.0 / (1.0 + 4.0 * (z ** 2))
+                G = np.exp(-4.0 * np.log(2.0) * (z ** 2))
                 return A * (eta * L + (1 - eta) * G)
 
             x_all = np.asarray(x_coords, dtype=float)
@@ -1598,40 +1657,65 @@ def _(
             def _interp_y(xq: float) -> float:
                 return float(np.interp(xq, x_all, y_all))
 
-            # Компоненты и baseline рисуем только на их support
-            for peak_idx, res in enumerate(fitting_results, 1):
-                for comp_idx, comp in enumerate(res['components'], 1):
-                    x1, x2 = float(comp['support'][0]), float(comp['support'][1])
-                    mask = (x_all >= x1) & (x_all <= x2)
-                    if not np.any(mask):
-                        continue
-
-                    xs = x_all[mask]
-                    ys = pseudo_voigt(xs, comp['A'], comp['mu'], comp['sigma'], comp['eta'])
-                    global_plot_data['x'] += xs.tolist()
-                    global_plot_data['y'] += ys.tolist()
-                    global_plot_data['type'] += [f'Пик {peak_idx} / Компонента {comp_idx}'] * len(xs)
-
-                    # baseline: прямая между границами support на уровне данных
-                    y1 = _interp_y(x1)
-                    y2 = _interp_y(x2)
-                    global_plot_data['x'] += [x1, x2]
-                    global_plot_data['y'] += [y1, y2]
-                    global_plot_data['type'] += [f'Baseline Пик {peak_idx} / Компонента {comp_idx}'] * 2
-
-            global_plot = (
-                ggplot(global_plot_data)
-                + geom_line(aes(x='x', y='y', color='type'), size=1.0)
-                + labs(x="2 theta", y="Интенсивность", title="Финальный график: данные (SG 5,2) + компоненты + baseline", color="Легенда")
-                + ggsize(1200, 450)
-            )
-
-            # ---------- Таблица: метрики по компонентам ----------
             def _baseline_at(xq: float, x1: float, y1: float, x2: float, y2: float) -> float:
                 if x2 == x1:
                     return float(y1)
                 return float(y1 + (y2 - y1) * (xq - x1) / (x2 - x1))
 
+            # Компоненты рисуем только на их support.
+            # Baseline рисуем ОДИН на пик (между общими границами support всех компонент).
+            # Выбросы не показываем и не используем в метриках
+            fitting_results_valid = [r for r in fitting_results if not bool(r.get('is_outlier', False))]
+
+            for peak_idx, res in enumerate(fitting_results_valid, 1):
+                comps = list(res.get('components', []))
+                if len(comps) == 0:
+                    continue
+                # ВАЖНО: в финальном графике есть ДВА независимых baseline:
+                # 1) baseline модели (fit): b0 + b1*x (лежит внутри модели baseline+Voigt)
+                # 2) baseline финального графика (хорда): прямая через интенсивности на границах пика
+                #
+                # Хорда строится по данным (SG 5,2) на общих границах support всех компонент.
+                peak_x1 = float(min(c['support'][0] for c in comps))
+                peak_x2 = float(max(c['support'][1] for c in comps))
+                peak_y1 = _interp_y(peak_x1)
+                peak_y2 = _interp_y(peak_x2)
+
+                # Хорда: одна линия на пик
+                global_plot_data['x'] += [peak_x1, peak_x2]
+                global_plot_data['y'] += [peak_y1, peak_y2]
+                global_plot_data['type'] += [f'Хорда Пик {peak_idx}'] * 2
+
+                # baseline модели (из joint fit). Если нет — фолбэк на хорду.
+                bl_fit = res.get('baseline', None)
+                has_fit_bl = isinstance(bl_fit, dict) and all(k in bl_fit for k in ('x1', 'y1', 'x2', 'y2')) and float(bl_fit['x2']) != float(bl_fit['x1'])
+
+                for comp_idx, comp in enumerate(res['components'], 1):
+                    # Модель на финальном графике рисуем на всём пике (а не только на support компоненты)
+                    mask = (x_all >= peak_x1) & (x_all <= peak_x2)
+                    if not np.any(mask):
+                        continue
+
+                    xs = x_all[mask]
+                    # МОДЕЛЬ = baseline_fit + Voigt (логика фита baseline+Voigt)
+                    y_fit_base = (
+                        np.array([_baseline_at(xv, float(bl_fit['x1']), float(bl_fit['y1']), float(bl_fit['x2']), float(bl_fit['y2'])) for xv in xs], dtype=float)
+                        if has_fit_bl
+                        else np.array([_baseline_at(xv, peak_x1, peak_y1, peak_x2, peak_y2) for xv in xs], dtype=float)
+                    )
+                    ys = y_fit_base + pseudo_voigt(xs, comp['A'], comp['mu'], comp['sigma'], comp['eta'])
+                    global_plot_data['x'] += xs.tolist()
+                    global_plot_data['y'] += ys.tolist()
+                    global_plot_data['type'] += [f'Пик {peak_idx} / Модель {comp_idx} (fit baseline + Voigt)'] * len(xs)
+
+            global_plot = (
+                ggplot(global_plot_data)
+                + geom_line(aes(x='x', y='y', color='type'), size=1.0)
+                + labs(x="2θ", y="Интенсивность", title="Финальный график: данные + компоненты + baseline", color="Легенда")
+                + ggsize(1200, 450)
+            )
+
+            # ---------- Таблица: метрики по компонентам ----------
             def _fwhm(x_grid: np.ndarray, y_corr: np.ndarray, x_mu: float, half_h: float) -> float | None:
                 if half_h <= 0 or len(x_grid) < 3:
                     return None
@@ -1660,32 +1744,58 @@ def _(
                 return float(xr - xl)
 
             component_rows = []
-            for peak_idx, res in enumerate(fitting_results, 1):
+            for peak_idx, res in enumerate(fitting_results_valid, 1):
                 is_outlier = bool(res.get('is_outlier', False))
+                comps = list(res.get('components', []))
+                if len(comps) == 0:
+                    continue
+
+                # Хорда (baseline финального графика): между общими границами support
+                peak_x1 = float(min(c['support'][0] for c in comps))
+                peak_x2 = float(max(c['support'][1] for c in comps))
+                peak_y1 = _interp_y(peak_x1)
+                peak_y2 = _interp_y(peak_x2)
+
+                # baseline модели (из joint fit). Если нет — фолбэк на хорду.
+                bl_fit = res.get('baseline', None)
+                has_fit_bl = isinstance(bl_fit, dict) and all(k in bl_fit for k in ('x1', 'y1', 'x2', 'y2')) and float(bl_fit['x2']) != float(bl_fit['x1'])
+
                 for comp_idx, comp in enumerate(res['components'], 1):
                     x1, x2 = float(comp['support'][0]), float(comp['support'][1])
-                    y1 = _interp_y(x1)
-                    y2 = _interp_y(x2)
 
                     mask = (x_all >= x1) & (x_all <= x2)
                     xs = x_all[mask]
                     if len(xs) < 3:
                         continue
 
-                    y_model = pseudo_voigt(xs, comp['A'], comp['mu'], comp['sigma'], comp['eta'])
-                    y_base = np.array([_baseline_at(xv, x1, y1, x2, y2) for xv in xs], dtype=float)
-                    y_corr = y_model - y_base
+                    # Хорда (baseline финального графика)
+                    y_chord = np.array([_baseline_at(xv, peak_x1, peak_y1, peak_x2, peak_y2) for xv in xs], dtype=float)
+
+                    # Модель (baseline_fit + Voigt)
+                    y_fit_base = (
+                        np.array([_baseline_at(xv, float(bl_fit['x1']), float(bl_fit['y1']), float(bl_fit['x2']), float(bl_fit['y2'])) for xv in xs], dtype=float)
+                        if has_fit_bl
+                        else y_chord
+                    )
+                    y_model = y_fit_base + pseudo_voigt(xs, comp['A'], comp['mu'], comp['sigma'], comp['eta'])
+
+                    # Для метрик используем превышение МОДЕЛИ над ХОРДОЙ (как вы описали)
+                    y_corr = y_model - y_chord
 
                     x_mu = float(comp['mu'])
-                    y_mu_model = float(pseudo_voigt(np.array([x_mu], dtype=float), comp['A'], comp['mu'], comp['sigma'], comp['eta'])[0])
-                    y_mu_base = _baseline_at(x_mu, x1, y1, x2, y2)
-                    height = float(y_mu_model - y_mu_base)
+                    y_mu_chord = _baseline_at(x_mu, peak_x1, peak_y1, peak_x2, peak_y2)
+                    if has_fit_bl:
+                        y_mu_fit_base = _baseline_at(x_mu, float(bl_fit['x1']), float(bl_fit['y1']), float(bl_fit['x2']), float(bl_fit['y2']))
+                    else:
+                        y_mu_fit_base = y_mu_chord
+                    y_mu_model = float(y_mu_fit_base + pseudo_voigt(np.array([x_mu], dtype=float), comp['A'], comp['mu'], comp['sigma'], comp['eta'])[0])
+                    height = float(y_mu_model - y_mu_chord)
 
                     fwhm_val = _fwhm(xs, y_corr, x_mu, height / 2.0)
                     # Площадь МЕЖДУ Voigt и baseline внутри support:
-                    # интеграл положительной части (Voigt - baseline)
+                    # интеграл положительной части (модель - хорда)
                     y_diff = np.maximum(y_corr, 0.0)
-                    area = float(np.trapz(y_diff, xs))
+                    area = float(np.trapezoid(y_diff, xs))
                     area_over_height = None if height <= 0 else float(area / height)
 
                     component_rows.append({
